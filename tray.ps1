@@ -1,5 +1,6 @@
 ﻿# Token Meter tray: native shell with a single WebView2 panel.
 param([string]$NodePath, [switch]$Show, [switch]$Verify, [switch]$VerifyMotion)
+. (Join-Path $PSScriptRoot 'scripts\startup.ps1')
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type -Path (Join-Path $PSScriptRoot 'native\GlassEffects.cs') -ReferencedAssemblies System.Drawing
 Add-Type -Path (Join-Path $PSScriptRoot 'native\ScreenshotGuard.cs')
@@ -85,6 +86,9 @@ public class AcrylicForm : Form {
   struct MARGINS { public int l, r, t, b; }
   protected override void OnHandleCreated(EventArgs e) {
     base.OnHandleCreated(e);
+    RefreshNativeFrame();
+  }
+  public void RefreshNativeFrame() {
     int dark = 1;
     DwmSetWindowAttribute(Handle, 20, ref dark, 4);
     int pref = 1;
@@ -100,7 +104,9 @@ function Test-Server {
 $script:node = $null
 if (-not (Test-Server)) {
   $nodeExecutable = if ($NodePath) { $NodePath } else { (Get-Command node.exe -ErrorAction Stop).Source }
-  $script:node = Start-Process -FilePath $nodeExecutable -ArgumentList 'server.mjs' -WorkingDirectory $dir -WindowStyle Hidden -PassThru
+  $script:node = New-Object Diagnostics.Process
+  $script:node.StartInfo = New-TokenMeterProcessStartInfo $nodeExecutable 'server.mjs' $dir
+  if (-not $script:node.Start()) { throw 'Token Meter server could not be started.' }
   for ($i = 0; $i -lt 40 -and -not (Test-Server); $i++) { Start-Sleep -Milliseconds 300 }
   if (-not (Test-Server)) { throw 'Token Meter server did not start. Check Node.js and config.json.' }
 }

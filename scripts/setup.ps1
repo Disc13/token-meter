@@ -53,9 +53,18 @@ try {
   $runtimeVersion = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::GetAvailableBrowserVersionString($null)
   Write-Output "WebView2 Runtime: $runtimeVersion"
 } catch { throw 'Install Microsoft Evergreen WebView2 Runtime: https://developer.microsoft.com/microsoft-edge/webview2/' }
+if ($AutoStart -or $StartNow) {
+  $scriptHost = Join-Path $env:SystemRoot 'System32\wscript.exe'
+  if (-not (Test-Path -LiteralPath $scriptHost) -or -not (Test-Path -LiteralPath (Join-Path $project 'token-meter.vbs'))) { throw 'The silent Windows Script Host launcher is missing.' }
+  foreach ($hostKey in @('HKCU:\Software\Microsoft\Windows Script Host\Settings','HKLM:\Software\Microsoft\Windows Script Host\Settings')) {
+    if (Test-Path -LiteralPath $hostKey) {
+      $hostSettings=Get-ItemProperty -LiteralPath $hostKey
+      if ($hostSettings.PSObject.Properties['Enabled'] -and $hostSettings.Enabled -eq 0) { throw 'Windows Script Host is disabled. Enable it before using silent deployment or sign-in startup.' }
+    }
+  }
+}
 if ($AutoStart) {
-  $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $command = Get-TokenMeterStartupCommand $project $powershell
+  $command = Get-TokenMeterStartupCommand $project $scriptHost
   if (-not (Test-Path -LiteralPath $runKey)) { New-Item -Path $runKey -Force | Out-Null }
   New-ItemProperty -LiteralPath $runKey -Name 'TokenMeter' -PropertyType String -Value $command -Force | Out-Null
   $approvalKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
@@ -73,11 +82,12 @@ if ($AutoStart) {
   Write-Output 'Token Meter will start silently at sign-in for this user (tray only, no popup).'
 }
 if ($StartNow) {
-  $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $arguments='-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+(Join-Path $project 'scripts\start.ps1')+'"'
+  $arguments='//B //Nologo "'+(Join-Path $project 'token-meter.vbs')+'" --background'
   $ready = New-Object Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset, "Local\TokenMeter-Ready-$port")
   try {
-    Start-Process -FilePath $powershell -ArgumentList $arguments -WorkingDirectory $project -WindowStyle Hidden | Out-Null
+    $launchInfo=New-TokenMeterProcessStartInfo $scriptHost $arguments $project
+    $launchProcess=[Diagnostics.Process]::Start($launchInfo)
+    $launchProcess.Dispose()
     if (-not $ready.WaitOne(30000)) { throw 'Tray did not become ready within 30 seconds. See %LOCALAPPDATA%\token-meter\startup.log.' }
     Write-Output 'Tray readiness confirmed. See tray (including hidden icons) and %LOCALAPPDATA%\token-meter\startup.log.'
   } finally { $ready.Dispose() }
